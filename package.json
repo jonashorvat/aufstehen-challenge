@@ -1,11 +1,7 @@
 {
   "name": "aufsteh-challenge",
-  "version": "2.0.0",
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
-  },
+  "version": "3.0.0",
+  "scripts": { "dev": "next dev", "build": "next build", "start": "next start" },
   "dependencies": {
     "next": "^14.0.0",
     "react": "^18.0.0",
