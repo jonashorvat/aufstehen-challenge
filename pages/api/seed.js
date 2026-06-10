@@ -11,41 +11,51 @@ export default async function handler(req, res) {
   const today = todayStr();
   const currentWeek = getCurrentWeekKey();
 
+  // Use pipeline for bulk writes - much faster
+  const pipeline = redis.pipeline();
+
   for (const p of PARTICIPANTS) {
     let streak = 0;
     let total = 0;
 
     for (const d of allDates) {
       if (d > today) continue;
-      const key = `ac:checkin:${d}:${p.name}`;
-      const existing = await redis.get(key);
-      let val = existing;
-      if (!existing) {
-        val = isWeekend(d) ? "excused" : "done";
-        await redis.set(key, val, { ex: 60 * 60 * 24 * 200 });
-      }
+      const val = isWeekend(d) ? "excused" : "done";
+      // Set with long TTL (365 days)
+      pipeline.set(`ac:checkin:${d}:${p.name}`, val, { ex: 60 * 60 * 24 * 365 });
       if (val === "done") total++;
-      if ((val === "done" || val === "excused") && !isWeekend(d)) streak++;
+      if (!isWeekend(d)) streak++;
     }
 
-    await redis.set(`ac:streak:${p.name}`, streak);
-    await redis.set(`ac:total:${p.name}`, total);
+    pipeline.set(`ac:streak:${p.name}`, streak);
+    pipeline.set(`ac:total:${p.name}`, total);
+    pipeline.set(`ac:penalties:${p.name}`, 0);
 
-    // Seed weekly reports for completed past weeks
+    // Seed weekly reports for all completed past weeks
     const weeksSeen = new Set();
     for (const d of allDates) {
       if (d >= today) continue;
       const wk = getWeekKey(d);
       if (weeksSeen.has(wk) || wk === currentWeek) continue;
       weeksSeen.add(wk);
-      const existingReport = await redis.get(`ac:weekreport:${wk}:${p.name}`);
-      if (!existingReport && p.options.length > 0) {
+      if (p.options.length > 0) {
         const optionResults = {};
         for (const o of p.options) optionResults[o] = "pass";
-        await redis.set(`ac:weekreport:${wk}:${p.name}`, JSON.stringify({ optionResults, penalties: 0, reportedAt: new Date().toISOString() }), { ex: 60 * 60 * 24 * 400 });
+        pipeline.set(
+          `ac:weekreport:${wk}:${p.name}`,
+          JSON.stringify({ optionResults, penalties: 0, reportedAt: new Date().toISOString() }),
+          { ex: 60 * 60 * 24 * 400 }
+        );
       }
     }
   }
 
-  return res.status(200).json({ success: true, dates: allDates.length, participants: PARTICIPANTS.length });
+  await pipeline.exec();
+
+  return res.status(200).json({
+    success: true,
+    dates: allDates.filter(d => d <= today).length,
+    participants: PARTICIPANTS.length,
+    message: "All participants seeded from June 1 — all green!",
+  });
 }
